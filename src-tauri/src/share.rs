@@ -1,8 +1,8 @@
 use std::path::Path;
 
+use objc2::AllocAnyThread;
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
-use objc2::AllocAnyThread;
 use objc2_app_kit::{NSSharingServicePicker, NSWindow};
 use objc2_foundation::{NSArray, NSPoint, NSRect, NSRectEdge, NSSize, NSString, NSURL};
 
@@ -22,9 +22,8 @@ pub unsafe fn present(ns_window: usize, path: &Path) -> Result<(), String> {
     let item = unsafe { Retained::cast::<AnyObject>(file_url) };
     let items = NSArray::from_retained_slice(&[item]);
 
-    let picker = unsafe {
-        NSSharingServicePicker::initWithItems(NSSharingServicePicker::alloc(), &items)
-    };
+    let picker =
+        unsafe { NSSharingServicePicker::initWithItems(NSSharingServicePicker::alloc(), &items) };
 
     let bounds = view.bounds();
     let anchor = NSRect::new(

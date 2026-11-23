@@ -24,12 +24,15 @@
       <h2>PDF created</h2>
       <p>
         {report.pages} page{report.pages === 1 ? "" : "s"} · {report.columns} ×
-        {report.rows} tiles
+        {report.rows} tiles · {report.page_width_mm} × {report.page_height_mm} mm ·
+        ≈ {Math.round(report.effective_dpi)} DPI
       </p>
       <p class="path">{report.output}</p>
       <div class="actions">
         <button type="button" onclick={tiler.reveal}>Reveal in Finder</button>
-        <button type="button" onclick={tiler.share}>Share…</button>
+        {#if tiler.shareSupported}
+          <button type="button" onclick={tiler.share}>Share…</button>
+        {/if}
       </div>
     </section>
   {/if}

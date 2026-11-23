@@ -17,6 +17,8 @@
     let unlisten: (() => void) | undefined;
     let disposed = false;
 
+    void tiler.loadShareSupport();
+
     (async () => {
       // Attach first so a file opened while the app runs is never missed.
       try {

@@ -20,10 +20,17 @@ fn remainder_produces_partial_edge_tiles() {
 
     let last_of_first_row = &plan.tiles[2];
     assert_eq!(
-        (last_of_first_row.col, last_of_first_row.x, last_of_first_row.width),
+        (
+            last_of_first_row.col,
+            last_of_first_row.x,
+            last_of_first_row.width
+        ),
         (2, 10, 2)
     );
-    assert_eq!(plan.tiles.iter().map(|t| t.width * t.height).sum::<u32>(), 120);
+    assert_eq!(
+        plan.tiles.iter().map(|t| t.width * t.height).sum::<u32>(),
+        120
+    );
 }
 
 #[test]

@@ -8,14 +8,17 @@
 <section class="preview-section">
   <TileGridPreview
     src={tiler.previewSrc}
-    tileWidth={tiler.tilePxW}
-    tileHeight={tiler.tilePxH}
-    onsize={tiler.handleSize}
+    plan={tiler.plan}
+    error={tiler.planError}
   />
-  {#if tiler.columns > 0 && tiler.rows > 0}
+  {#if tiler.plan}
     <p class="hint">
-      {tiler.naturalWidth} × {tiler.naturalHeight} px · grid {tiler.columns} ×
-      {tiler.rows} · {tiler.pageCount} page{tiler.pageCount === 1 ? "" : "s"}
+      {tiler.plan.image_width} × {tiler.plan.image_height} px · {tiler.plan.page_width_mm}
+      × {tiler.plan.page_height_mm} mm · grid {tiler.plan.columns} ×
+      {tiler.plan.rows} · {tiler.pageCount} page{tiler.pageCount === 1 ? "" : "s"} · ≈
+      {tiler.effectiveDpi} DPI
     </p>
+  {:else if tiler.planLoading}
+    <p class="hint">Calculating layout…</p>
   {/if}
 </section>

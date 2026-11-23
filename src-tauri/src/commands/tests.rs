@@ -6,17 +6,16 @@ fn startup_input_accepts_an_existing_file() {
     let file = dir.path().join("photo.png");
     std::fs::write(&file, b"not really a png").unwrap();
 
-    let resolved = resolve_startup_input(Some(file.into_os_string())).unwrap();
+    let resolved = resolve_startup_input(file.into_os_string()).unwrap();
     assert!(resolved.ends_with("photo.png"));
 }
 
 #[test]
 fn startup_input_ignores_missing_paths_and_directories() {
-    assert!(resolve_startup_input(None).is_none());
-    assert!(resolve_startup_input(Some(OsString::from("/does/not/exist.png"))).is_none());
+    assert!(resolve_startup_input(OsString::from("/does/not/exist.png")).is_none());
 
     let dir = tempfile::tempdir().unwrap();
-    assert!(resolve_startup_input(Some(dir.path().as_os_str().to_owned())).is_none());
+    assert!(resolve_startup_input(dir.path().as_os_str().to_owned()).is_none());
 }
 
 #[test]
@@ -55,12 +54,37 @@ fn validation_errors_keep_their_kind() {
         ApiErrorKind::InvalidMargin
     );
     assert_eq!(
+        ApiError::from(TileError::InvalidGrid).kind,
+        ApiErrorKind::InvalidGrid
+    );
+    assert_eq!(
         ApiError::from(TileError::PageTooSmall).kind,
         ApiErrorKind::PageTooSmall
     );
     assert_eq!(
-        ApiError::from(TileError::InvalidInputName(PathBuf::from("x"))).kind,
-        ApiErrorKind::InvalidInputName
+        ApiError::from(TileError::TooManyPages { pages: 10, max: 4 }).kind,
+        ApiErrorKind::TooManyPages
+    );
+    assert_eq!(
+        ApiError::from(TileError::PageTooLarge {
+            width: 6000.0,
+            height: 100.0
+        })
+        .kind,
+        ApiErrorKind::PageTooLarge
+    );
+    assert_eq!(
+        ApiError::from(TileError::ImageTooLarge {
+            width: 10,
+            height: 10,
+            max: 1
+        })
+        .kind,
+        ApiErrorKind::ImageTooLarge
+    );
+    assert_eq!(
+        ApiError::from(TileError::OutputPathNotAbsolute(PathBuf::from("x"))).kind,
+        ApiErrorKind::OutputPathNotAbsolute
     );
     assert_eq!(
         ApiError::from(TileError::Pdf("boom".into())).kind,
@@ -77,5 +101,9 @@ fn kind_serializes_as_snake_case() {
     assert_eq!(
         serde_json::to_value(ApiErrorKind::InvalidDpi).unwrap(),
         serde_json::json!("invalid_dpi")
+    );
+    assert_eq!(
+        serde_json::to_value(ApiErrorKind::TooManyPages).unwrap(),
+        serde_json::json!("too_many_pages")
     );
 }

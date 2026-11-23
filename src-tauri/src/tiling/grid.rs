@@ -34,7 +34,7 @@ pub fn plan_grid(
 
     let mut tiles = Vec::with_capacity((columns as usize) * (rows as usize));
 
-    for row in 0..rows{
+    for row in 0..rows {
         for col in 0..columns {
             let x = col * tw;
             let y = row * th;

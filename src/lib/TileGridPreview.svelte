@@ -1,141 +1,234 @@
 <script lang="ts">
+  import type { LayoutPlan } from "$lib/types";
+
   let {
     src,
-    tileWidth,
-    tileHeight,
-    onsize,
+    plan,
+    error = null,
   }: {
     src: string;
-    tileWidth: number;
-    tileHeight: number;
-    onsize?: (size: { width: number; height: number }) => void;
+    plan: LayoutPlan | null;
+    error?: string | null;
   } = $props();
 
-  let imgEl = $state<HTMLImageElement>();
   let canvasEl = $state<HTMLCanvasElement>();
-  let failed = $state(false);
+  let imgEl = $state<HTMLImageElement>();
+  let loadedSrc = $state("");
+  let failedSrc = $state<string | null>(null);
 
-  // Keep the overlay usable for very fine grids: draw at most this many lines.
-  const MAX_LINES = 400;
+  const PREVIEW_WIDTH = 760;
+  const PREVIEW_HEIGHT = 460;
 
+  /** Draws the pages exactly as the PDF lays them out: one sheet per plan page. */
   function draw() {
-    if (!imgEl || !canvasEl) return;
+    const canvas = canvasEl;
+    const image = imgEl;
+    if (!canvas || !image || !plan || loadedSrc !== src) return;
+    if (!image.naturalWidth || !image.naturalHeight) return;
 
-    const width = imgEl.naturalWidth;
-    const height = imgEl.naturalHeight;
-    if (!width || !height) return;
-
-    const rect = imgEl.getBoundingClientRect();
-    if (rect.width === 0 || rect.height === 0) return;
-
-    const dpr = window.devicePixelRatio || 1;
-    canvasEl.width = Math.max(1, Math.round(rect.width * dpr));
-    canvasEl.height = Math.max(1, Math.round(rect.height * dpr));
-    canvasEl.style.width = `${rect.width}px`;
-    canvasEl.style.height = `${rect.height}px`;
-
-    const ctx = canvasEl.getContext("2d");
+    const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, rect.width, rect.height);
+    const cols = plan.columns;
+    const rows = plan.rows;
+    const pageW = plan.page_width_mm;
+    const pageH = plan.page_height_mm;
+    if (!(pageW > 0) || !(pageH > 0) || cols < 1 || rows < 1) return;
 
-    if (tileWidth <= 0 || tileHeight <= 0) return;
+    // The pages form a grid; laid out side by side they reconstruct the poster.
+    const sheetW = pageW * cols;
+    const sheetH = pageH * rows;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const pxPerMm = Math.min(PREVIEW_WIDTH / sheetW, PREVIEW_HEIGHT / sheetH);
+    if (!(pxPerMm > 0)) return;
 
-    const scaleX = rect.width / width;
-    const scaleY = rect.height / height;
-    const columns = Math.ceil(width / tileWidth);
-    const rows = Math.ceil(height / tileHeight);
-    const stepX = Math.max(1, Math.ceil(columns / MAX_LINES)) * tileWidth;
-    const stepY = Math.max(1, Math.ceil(rows / MAX_LINES)) * tileHeight;
+    const cssW = Math.max(1, Math.round(sheetW * pxPerMm));
+    const cssH = Math.max(1, Math.round(sheetH * pxPerMm));
+    canvas.width = Math.max(1, Math.round(cssW * dpr));
+    canvas.height = Math.max(1, Math.round(cssH * dpr));
+    canvas.style.width = `${cssW}px`;
+    canvas.style.height = `${cssH}px`;
 
-    ctx.strokeStyle = "rgba(255, 68, 68, 0.9)";
-    ctx.lineWidth = 1;
+    const k = pxPerMm * dpr;
+    ctx.setTransform(k, 0, 0, k, 0, 0);
+    ctx.clearRect(0, 0, sheetW, sheetH);
+    ctx.imageSmoothingQuality = "high";
+
+    for (const page of plan.pages) {
+      const ox = page.col * pageW;
+      const oy = page.row * pageH;
+
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(ox, oy, pageW, pageH);
+      ctx.clip();
+
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(ox, oy, pageW, pageH);
+
+      // The whole image at the plan's rect; the page clip hides the rest.
+      ctx.drawImage(
+        image,
+        0,
+        0,
+        image.naturalWidth,
+        image.naturalHeight,
+        ox + page.image.x,
+        oy + page.image.y,
+        page.image.width,
+        page.image.height,
+      );
+      ctx.restore();
+    }
+
+    // Sheet edges are UI chrome, not printed marks.
+    ctx.strokeStyle = "rgba(0, 0, 0, 0.18)";
+    ctx.lineWidth = 1 / k;
+    for (const page of plan.pages) {
+      ctx.strokeRect(
+        page.col * pageW,
+        page.row * pageH,
+        pageW,
+        pageH,
+      );
+    }
+
+    drawCropMarks(ctx, plan);
+  }
+
+  /** Same marks as the PDF writer: from the safe boundary to each core edge. */
+  function drawCropMarks(ctx: CanvasRenderingContext2D, layout: LayoutPlan) {
+    if (layout.pages.length < 2) return;
+
+    const safe = layout.safe_margin_mm;
+    const pageW = layout.page_width_mm;
+    const pageH = layout.page_height_mm;
+    const segments: Array<[number, number, number, number]> = [];
+
+    for (const page of layout.pages) {
+      const ox = page.col * pageW;
+      const oy = page.row * pageH;
+      const core = page.core;
+
+      for (const x of [core.x, core.x + core.width]) {
+        if (core.y > safe) {
+          segments.push([ox + x, oy + safe, ox + x, oy + core.y]);
+        }
+        const start = core.y + core.height;
+        const end = pageH - safe;
+        if (end > start) {
+          segments.push([ox + x, oy + start, ox + x, oy + end]);
+        }
+      }
+
+      for (const y of [core.y, core.y + core.height]) {
+        if (core.x > safe) {
+          segments.push([ox + safe, oy + y, ox + core.x, oy + y]);
+        }
+        const start = core.x + core.width;
+        const end = pageW - safe;
+        if (end > start) {
+          segments.push([ox + start, oy + y, ox + end, oy + y]);
+        }
+      }
+    }
+
+    if (segments.length === 0) return;
+
+    ctx.strokeStyle = "#111111";
+    ctx.lineWidth = 0.25;
     ctx.beginPath();
-
-    for (let x = stepX; x < width; x += stepX) {
-      const px = Math.round(x * scaleX) + 0.5;
-      ctx.moveTo(px, 0);
-      ctx.lineTo(px, rect.height);
+    for (const [x1, y1, x2, y2] of segments) {
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
     }
-    for (let y = stepY; y < height; y += stepY) {
-      const py = Math.round(y * scaleY) + 0.5;
-      ctx.moveTo(0, py);
-      ctx.lineTo(rect.width, py);
-    }
-
     ctx.stroke();
   }
 
   $effect(() => {
+    // Redraw when the source finishes loading, or the plan changes.
     src;
-    tileWidth;
-    tileHeight;
+    plan;
+    loadedSrc;
     draw();
   });
 
   $effect(() => {
-    if (!imgEl) return;
+    const canvas = canvasEl;
+    if (!canvas) return;
 
     const observer = new ResizeObserver(() => draw());
-    observer.observe(imgEl);
+    observer.observe(canvas);
     return () => observer.disconnect();
   });
 
   function handleLoad() {
-    failed = false;
-    if (imgEl) {
-      onsize?.({ width: imgEl.naturalWidth, height: imgEl.naturalHeight });
-    }
+    loadedSrc = src;
     draw();
   }
 </script>
 
 <div class="preview">
-  {#if !failed}
-    <img
-      bind:this={imgEl}
-      {src}
-      alt="Tile grid overlay"
-      onload={handleLoad}
-      onerror={() => (failed = true)}
-    />
-    <canvas bind:this={canvasEl}></canvas>
-  {:else}
+  <img
+    bind:this={imgEl}
+    class="source"
+    {src}
+    alt=""
+    onload={handleLoad}
+    onerror={() => (failedSrc = src)}
+  />
+
+  {#if error}
+    <p class="preview-error">{error}</p>
+  {:else if failedSrc === src}
     <p class="preview-error">
       Preview unavailable for this file. It can still be tiled and exported.
     </p>
+  {:else if plan}
+    <canvas bind:this={canvasEl}></canvas>
+  {:else}
+    <p class="preview-pending">Calculating layout…</p>
   {/if}
 </div>
 
 <style>
   .preview {
-    position: relative;
-    display: inline-block;
-    max-width: 100%;
-    line-height: 0;
+    display: flex;
+    justify-content: center;
   }
 
-  img {
-    display: block;
-    max-width: 100%;
-    max-height: 42vh;
-    border-radius: 6px;
-  }
-
-  canvas {
+  .source {
     position: absolute;
-    inset: 0;
+    width: 1px;
+    height: 1px;
+    opacity: 0;
     pointer-events: none;
   }
 
-  .preview-error {
+  canvas {
+    display: block;
+    max-width: 100%;
+    height: auto;
+    border-radius: 4px;
+    box-shadow: 0 1px 6px rgba(0, 0, 0, 0.18);
+  }
+
+  .preview-error,
+  .preview-pending {
     margin: 0;
     padding: 12px;
     line-height: 1.4;
     font-size: 13px;
+    border-radius: 6px;
+  }
+
+  .preview-error {
     color: #a33;
     background: rgba(255, 0, 0, 0.06);
-    border-radius: 6px;
+  }
+
+  .preview-pending {
+    color: #666;
+    background: rgba(0, 0, 0, 0.04);
   }
 </style>

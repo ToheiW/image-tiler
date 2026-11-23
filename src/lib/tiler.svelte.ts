@@ -3,10 +3,20 @@ import { basename, dirname, join } from "@tauri-apps/api/path";
 import { ask, open, save } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 
-import type { ApiError, PdfLayout, PdfReport, PdfRequest } from "./types";
+import type {
+  ApiError,
+  LayoutPlan,
+  LayoutSpec,
+  MarginsMm,
+  PageOrientation,
+  PageSize,
+  PdfLayout,
+  PdfReport,
+  PdfRequest,
+  PlanRequest,
+  SizeMode,
+} from "./types";
 
-export type SizeMode = "tile" | "grid" | "a4";
-export type A4Spec = "grid" | "count";
 export type TileUnit = "mm" | "px";
 
 /**
@@ -17,186 +27,106 @@ export function createTiler() {
   let inputPath = $state("");
   let outputPath = $state("");
   let previewSrc = $state("");
-  let naturalWidth = $state(0);
-  let naturalHeight = $state(0);
 
   let unit = $state<TileUnit>("mm");
   let tileW = $state(100);
   let tileH = $state(100);
   let dpi = $state(300);
   let layout = $state<PdfLayout>("one_tile_per_page");
+  let mode = $state<SizeMode>("pages");
+  let pageSize = $state<PageSize>("a4");
+  let orientation = $state<PageOrientation>("portrait");
+  let columns = $state(2);
+  let rows = $state(2);
   let overlapMm = $state(10);
-  let marginMm = $state(10);
+  let margins = $state<MarginsMm>({ top: 10, right: 10, bottom: 10, left: 10 });
 
-  let sizeMode = $state<SizeMode>("tile");
-  let gridCols = $state(2);
-  let gridRows = $state(2);
-  let a4Spec = $state<A4Spec>("grid");
-  let a4Cols = $state(2);
-  let a4Rows = $state(2);
-  let a4Total = $state(4);
+  // The backend owns the geometry; this plan is exactly what the PDF uses.
+  let plan = $state<LayoutPlan | null>(null);
+  let planError = $state<string | null>(null);
+  let planLoading = $state(false);
 
   let busy = $state(false);
   let error = $state<string | null>(null);
   let report = $state<PdfReport | null>(null);
+  let shareSupported = $state(false);
 
   // Used so re-picking the input refreshes an untouched default path
   // without clobbering a path the user edited by hand.
   let lastDerivedOutput = "";
+  let inputSeq = 0;
+  let planSeq = 0;
 
   function toPixels(value: number): number {
-    if (!Number.isFinite(value)) return 0;
-    if (unit === "mm") {
-      return dpi > 0 ? Math.round((value / 25.4) * dpi) : 0;
-    }
-    return Math.round(value);
+    if (!Number.isFinite(value) || value <= 0) return 0;
+    return unit === "mm" ? Math.round((value / 25.4) * Math.max(1, dpi)) : Math.round(value);
   }
 
-  /** Picks the rows x cols whose shape best matches the image. */
-  function bestGrid(
-    total: number,
-    imageWidth: number,
-    imageHeight: number,
-    page: [number, number],
-    margin: number,
-    overlap: number,
-  ): { cols: number; rows: number } {
-    const [pageWidth, pageHeight] = page;
-    const coreWidth = pageWidth - 2 * (margin + overlap);
-    const coreHeight = pageHeight - 2 * (margin + overlap);
+  let tilePxW = $derived(toPixels(tileW));
+  let tilePxH = $derived(toPixels(tileH));
 
-    if (
-      !Number.isInteger(total) ||
-      total < 1 ||
-      imageWidth <= 0 ||
-      imageHeight <= 0 ||
-      !(coreWidth > 0) ||
-      !(coreHeight > 0)
-    ) {
-      return { cols: 1, rows: 1 };
-    }
-
-    const target = imageWidth / imageHeight;
-    let best = { cols: 1, rows: total, score: Number.POSITIVE_INFINITY };
-
-    for (let cols = 1; cols <= total; cols++) {
-      if (total % cols !== 0) continue;
-      const rows = total / cols;
-      const gridAspect = (cols * coreWidth) / (rows * coreHeight);
-      const score = Math.abs(Math.log(gridAspect / target));
-      if (score < best.score) {
-        best = { cols, rows, score };
-      }
-    }
-
-    return { cols: best.cols, rows: best.rows };
-  }
-
-  let a4Landscape = $derived(naturalWidth > naturalHeight);
-  let a4Page = $derived<[number, number]>(
-    a4Landscape ? [297, 210] : [210, 297],
-  );
-
-  let a4AutoGrid = $derived(
-    bestGrid(a4Total, naturalWidth, naturalHeight, a4Page, marginMm, overlapMm),
-  );
-  let a4Grid = $derived(
-    a4Spec === "grid" ? { cols: a4Cols, rows: a4Rows } : a4AutoGrid,
-  );
-
-  let gridSpec = $derived(
-    sizeMode === "grid"
-      ? { cols: gridCols, rows: gridRows }
-      : sizeMode === "a4"
-        ? a4Grid
-        : null,
-  );
-
-  let hasValidGridSpec = $derived(
-    gridSpec !== null &&
-      Number.isInteger(gridSpec.cols) &&
-      gridSpec.cols >= 1 &&
-      Number.isInteger(gridSpec.rows) &&
-      gridSpec.rows >= 1,
-  );
-
-  let tilePxW = $derived(
-    gridSpec && hasValidGridSpec && naturalWidth > 0
-      ? Math.ceil(naturalWidth / gridSpec.cols)
-      : toPixels(tileW),
-  );
-  let tilePxH = $derived(
-    gridSpec && hasValidGridSpec && naturalHeight > 0
-      ? Math.ceil(naturalHeight / gridSpec.rows)
-      : toPixels(tileH),
-  );
-
-  let columns = $derived(
-    gridSpec
-      ? hasValidGridSpec && naturalWidth > 0
-        ? gridSpec.cols
-        : 0
-      : naturalWidth > 0 && tilePxW > 0
-        ? Math.ceil(naturalWidth / tilePxW)
-        : 0,
-  );
-  let rows = $derived(
-    gridSpec
-      ? hasValidGridSpec && naturalHeight > 0
-        ? gridSpec.rows
-        : 0
-      : naturalHeight > 0 && tilePxH > 0
-        ? Math.ceil(naturalHeight / tilePxH)
-        : 0,
-  );
-  let pageCount = $derived(
-    layout === "single_page" ? (columns > 0 && rows > 0 ? 1 : 0) : columns * rows,
-  );
-
-  let a4CoreValid = $derived(
-    a4Page[0] - 2 * (marginMm + overlapMm) > 0 &&
-      a4Page[1] - 2 * (marginMm + overlapMm) > 0,
-  );
-
-  let a4EffectiveDpi = $derived.by(() => {
-    if (sizeMode !== "a4" || naturalWidth <= 0 || naturalHeight <= 0) return 0;
-    const coreWidth = a4Page[0] - 2 * (marginMm + overlapMm);
-    const coreHeight = a4Page[1] - 2 * (marginMm + overlapMm);
-    if (!(coreWidth > 0 && coreHeight > 0)) return 0;
-
-    const scale = Math.min(
-      (coreWidth * a4Grid.cols) / naturalWidth,
-      (coreHeight * a4Grid.rows) / naturalHeight,
-    );
-    return scale > 0 ? Math.round(25.4 / scale) : 0;
+  let spec = $derived<LayoutSpec>({
+    mode,
+    layout,
+    page_size: pageSize,
+    orientation,
+    columns,
+    rows,
+    dpi,
+    tile_width: tilePxW,
+    tile_height: tilePxH,
+    margins_mm: { ...margins },
+    overlap_mm: overlapMm,
   });
 
-  let gridValid = $derived(
-    sizeMode === "tile"
-      ? tilePxW > 0 && tilePxH > 0
-      : sizeMode === "grid"
-        ? hasValidGridSpec
-        : hasValidGridSpec && a4CoreValid,
-  );
+  let planReady = $derived(plan !== null && planError === null && !planLoading);
+  let pageCount = $derived(plan?.pages.length ?? 0);
+  let effectiveDpi = $derived(plan ? Math.round(plan.effective_dpi) : 0);
 
   let canGenerate = $derived(
-    !busy &&
-      inputPath !== "" &&
-      outputPath.trim() !== "" &&
-      naturalWidth > 0 &&
-      naturalHeight > 0 &&
-      tilePxW > 0 &&
-      tilePxH > 0 &&
-      dpi > 0 &&
-      columns > 0 &&
-      rows > 0 &&
-      gridValid &&
-      (layout === "single_page" ||
-        (Number.isFinite(overlapMm) &&
-          overlapMm >= 0 &&
-          Number.isFinite(marginMm) &&
-          marginMm >= 0)),
+    !busy && inputPath !== "" && planReady && pageCount > 0,
   );
+
+  // Ask the backend for the shared plan whenever the image or settings change.
+  $effect(() => {
+    const path = inputPath;
+    const nextSpec = spec;
+    const seq = ++planSeq;
+
+    if (!path) {
+      plan = null;
+      planError = null;
+      planLoading = false;
+      return;
+    }
+
+    planLoading = true;
+    const timer = setTimeout(async () => {
+      const request: PlanRequest = { input: path, spec: nextSpec };
+      try {
+        const next = await invoke<LayoutPlan>("plan_layout", { request });
+        if (seq !== planSeq) return;
+        plan = next;
+        planError = null;
+      } catch (raw) {
+        if (seq !== planSeq) return;
+        plan = null;
+        planError = (raw as ApiError)?.message ?? String(raw);
+      } finally {
+        if (seq === planSeq) planLoading = false;
+      }
+    }, 120);
+
+    return () => clearTimeout(timer);
+  });
+
+  // A finished report describes the old settings; drop it when they change.
+  $effect(() => {
+    inputPath;
+    spec;
+    report = null;
+    error = null;
+  });
 
   function round1(value: number): number {
     return Math.round(value * 10) / 10;
@@ -222,51 +152,70 @@ export function createTiler() {
   }
 
   async function applyInputPath(path: string) {
+    const seq = ++inputSeq;
     inputPath = path;
-    previewSrc = convertFileSrc(path);
-    naturalWidth = 0;
-    naturalHeight = 0;
+    previewSrc = "";
     report = null;
     error = null;
 
-    const derived = await join(
-      await dirname(path),
-      `${stripExtension(await basename(path))}-tiles.pdf`,
-    );
-    if (outputPath === "" || outputPath === lastDerivedOutput) {
-      outputPath = derived;
+    // The asset protocol only serves paths it has been told about.
+    try {
+      const allowed = await invoke<string>("allow_preview", { path });
+      if (seq === inputSeq) {
+        previewSrc = convertFileSrc(allowed);
+      }
+    } catch (raw) {
+      if (seq === inputSeq) {
+        error = (raw as ApiError)?.message ?? String(raw);
+      }
     }
-    lastDerivedOutput = derived;
+
+    try {
+      const derived = await join(
+        await dirname(path),
+        `${stripExtension(await basename(path))}-tiles.pdf`,
+      );
+      if (seq !== inputSeq) return;
+      if (outputPath === "" || outputPath === lastDerivedOutput) {
+        outputPath = derived;
+      }
+      lastDerivedOutput = derived;
+    } catch {
+      // Path derivation is optional; the save dialog still supplies a path.
+    }
   }
 
   async function chooseInput() {
-    const picked = await open({
-      multiple: false,
-      directory: false,
-      filters: [{ name: "Images", extensions: ["png", "jpg", "jpeg", "webp"] }],
-    });
-    if (typeof picked !== "string") return;
-
-    await applyInputPath(picked);
-  }
-
-  async function chooseOutput() {
-    const picked = await save({
-      defaultPath: outputPath || undefined,
-      filters: [{ name: "PDF", extensions: ["pdf"] }],
-    });
-    if (typeof picked === "string") {
-      outputPath = picked;
+    try {
+      const picked = await open({
+        multiple: false,
+        directory: false,
+        filters: [{ name: "Images", extensions: ["png", "jpg", "jpeg", "webp"] }],
+      });
+      if (typeof picked === "string") {
+        await applyInputPath(picked);
+      }
+    } catch (raw) {
+      error = (raw as ApiError)?.message ?? String(raw);
     }
-  }
-
-  function handleSize(size: { width: number; height: number }) {
-    naturalWidth = size.width;
-    naturalHeight = size.height;
   }
 
   async function generate() {
     if (!canGenerate) return;
+
+    // Always ask where to save: the previous path is only a suggestion.
+    let picked: string | null;
+    try {
+      picked = await save({
+        defaultPath: outputPath || undefined,
+        filters: [{ name: "PDF", extensions: ["pdf"] }],
+      });
+    } catch (raw) {
+      error = (raw as ApiError)?.message ?? String(raw);
+      return;
+    }
+    if (typeof picked !== "string") return;
+    outputPath = picked;
 
     busy = true;
     error = null;
@@ -274,14 +223,8 @@ export function createTiler() {
 
     const request: PdfRequest = {
       input: inputPath,
-      output: outputPath,
-      tile_width: tilePxW,
-      tile_height: tilePxH,
-      dpi,
-      layout,
-      overlap_mm: layout === "one_tile_per_page" ? overlapMm : 0,
-      margin_mm: layout === "one_tile_per_page" ? marginMm : 0,
-      ...(sizeMode === "a4" ? { page_size_mm: a4Page } : {}),
+      output: picked,
+      spec,
       overwrite: false,
     };
 
@@ -320,17 +263,28 @@ export function createTiler() {
   }
 
   async function reveal() {
-    if (report) {
+    if (!report) return;
+    try {
       await revealItemInDir(report.output);
+    } catch (raw) {
+      error = (raw as ApiError)?.message ?? String(raw);
     }
   }
 
   async function share() {
-    if (!report) return;
+    if (!report || !shareSupported) return;
     try {
       await invoke("share_pdf", { path: report.output });
     } catch (raw) {
       error = typeof raw === "string" ? raw : String(raw);
+    }
+  }
+
+  async function loadShareSupport() {
+    try {
+      shareSupported = await invoke<boolean>("share_supported");
+    } catch {
+      shareSupported = false;
     }
   }
 
@@ -341,17 +295,8 @@ export function createTiler() {
     get outputPath() {
       return outputPath;
     },
-    set outputPath(value: string) {
-      outputPath = value;
-    },
     get previewSrc() {
       return previewSrc;
-    },
-    get naturalWidth() {
-      return naturalWidth;
-    },
-    get naturalHeight() {
-      return naturalHeight;
     },
 
     get unit() {
@@ -387,67 +332,42 @@ export function createTiler() {
     set overlapMm(value: number) {
       overlapMm = value;
     },
-    get marginMm() {
-      return marginMm;
+    get margins() {
+      return margins;
     },
-    set marginMm(value: number) {
-      marginMm = value;
-    },
-
-    get sizeMode() {
-      return sizeMode;
-    },
-    set sizeMode(value: SizeMode) {
-      sizeMode = value;
-    },
-    get gridCols() {
-      return gridCols;
-    },
-    set gridCols(value: number) {
-      gridCols = value;
-    },
-    get gridRows() {
-      return gridRows;
-    },
-    set gridRows(value: number) {
-      gridRows = value;
-    },
-    get a4Spec() {
-      return a4Spec;
-    },
-    set a4Spec(value: A4Spec) {
-      a4Spec = value;
-    },
-    get a4Cols() {
-      return a4Cols;
-    },
-    set a4Cols(value: number) {
-      a4Cols = value;
-    },
-    get a4Rows() {
-      return a4Rows;
-    },
-    set a4Rows(value: number) {
-      a4Rows = value;
-    },
-    get a4Total() {
-      return a4Total;
-    },
-    set a4Total(value: number) {
-      a4Total = value;
+    set margins(value: MarginsMm) {
+      margins = value;
     },
 
-    get a4Landscape() {
-      return a4Landscape;
+    get mode() {
+      return mode;
     },
-    get a4Page() {
-      return a4Page;
+    set mode(value: SizeMode) {
+      mode = value;
     },
-    get a4Grid() {
-      return a4Grid;
+    get pageSize() {
+      return pageSize;
     },
-    get a4EffectiveDpi() {
-      return a4EffectiveDpi;
+    set pageSize(value: PageSize) {
+      pageSize = value;
+    },
+    get orientation() {
+      return orientation;
+    },
+    set orientation(value: PageOrientation) {
+      orientation = value;
+    },
+    get columns() {
+      return columns;
+    },
+    set columns(value: number) {
+      columns = value;
+    },
+    get rows() {
+      return rows;
+    },
+    set rows(value: number) {
+      rows = value;
     },
 
     get tilePxW() {
@@ -456,14 +376,21 @@ export function createTiler() {
     get tilePxH() {
       return tilePxH;
     },
-    get columns() {
-      return columns;
+
+    get plan() {
+      return plan;
     },
-    get rows() {
-      return rows;
+    get planError() {
+      return planError;
+    },
+    get planLoading() {
+      return planLoading;
     },
     get pageCount() {
       return pageCount;
+    },
+    get effectiveDpi() {
+      return effectiveDpi;
     },
 
     get busy() {
@@ -478,15 +405,17 @@ export function createTiler() {
     get canGenerate() {
       return canGenerate;
     },
+    get shareSupported() {
+      return shareSupported;
+    },
 
     switchUnit,
     chooseInput,
-    chooseOutput,
-    handleSize,
     applyInputPath,
     generate,
     reveal,
     share,
+    loadShareSupport,
   };
 }
 

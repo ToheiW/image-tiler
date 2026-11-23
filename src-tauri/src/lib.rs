@@ -5,7 +5,7 @@ mod share;
 pub mod tiling;
 
 use tauri::{Emitter, Manager};
-use tracing_subscriber::{fmt, EnvFilter};
+use tracing_subscriber::{EnvFilter, fmt};
 
 fn init_tracing() {
     let default_filter = if cfg!(debug_assertions) {
@@ -18,15 +18,7 @@ fn init_tracing() {
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default_filter));
 
     // try_init: a second subscriber is not a crash-worthy condition.
-    let _ = fmt()
-        .with_env_filter(filter)
-        .with_target(true)
-        .try_init();
-}
-
-#[tauri::command]
-fn greet(name: &str) -> String {
-    format!("Hello, {}! You've been greeted from Rust!", name)
+    let _ = fmt().with_env_filter(filter).with_target(true).try_init();
 }
 
 /// Handles OS "open with" requests (macOS/iOS/Android): buffer the path for a
@@ -68,9 +60,11 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(commands::PendingOpen::default())
         .invoke_handler(tauri::generate_handler![
-            greet,
             commands::tile_to_pdf,
+            commands::plan_layout,
             commands::startup_input,
+            commands::allow_preview,
+            commands::share_supported,
             commands::share_pdf
         ])
         .build(tauri::generate_context!())

@@ -5,46 +5,47 @@
 </script>
 
 <section class="field">
-  <div class="grid-3">
+  <div class="field-header">
+    <span class="label">Margins (mm)</span>
+    <span class="hint">Plus a fixed 5 mm printer-safe edge</span>
+  </div>
+
+  <div class="grid-2">
     <label>
-      DPI
-      <input
-        type="number"
-        min="1"
-        step="1"
-        bind:value={tiler.dpi}
-        disabled={tiler.sizeMode === "a4"}
-      />
+      Top
+      <input type="number" min="0" step="1" bind:value={tiler.margins.top} />
     </label>
     <label>
-      Overlap (mm)
-      <input
-        type="number"
-        min="0"
-        step="1"
-        bind:value={tiler.overlapMm}
-        disabled={tiler.layout === "single_page"}
-      />
+      Right
+      <input type="number" min="0" step="1" bind:value={tiler.margins.right} />
     </label>
     <label>
-      Safe margin (mm)
-      <input
-        type="number"
-        min="0"
-        step="1"
-        bind:value={tiler.marginMm}
-        disabled={tiler.layout === "single_page"}
-      />
+      Bottom
+      <input type="number" min="0" step="1" bind:value={tiler.margins.bottom} />
+    </label>
+    <label>
+      Left
+      <input type="number" min="0" step="1" bind:value={tiler.margins.left} />
     </label>
   </div>
+
+  <label>
+    Overlap (mm)
+    <input
+      type="number"
+      min="0"
+      step="1"
+      bind:value={tiler.overlapMm}
+      disabled={tiler.layout === "single_page"}
+    />
+  </label>
+
   {#if tiler.layout === "single_page"}
-    <p class="hint">
-      Overlap and safe margin only apply when each tile gets its own page.
-    </p>
+    <p class="hint">Overlap only applies when each tile gets its own page.</p>
   {:else}
     <p class="hint">
-      Print at 100% (actual size), not "fit to page", then trim along the crop
-      marks.
+      Overlap is limited to the margin on each side. Print at 100% (actual size),
+      not "fit to page", then trim along the crop marks.
     </p>
   {/if}
 </section>

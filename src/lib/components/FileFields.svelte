@@ -16,15 +16,3 @@
     <button type="button" onclick={tiler.chooseInput}>Choose…</button>
   </div>
 </section>
-
-<section class="field">
-  <label for="output-path">Output PDF</label>
-  <div class="row">
-    <input
-      id="output-path"
-      bind:value={tiler.outputPath}
-      placeholder="tiles.pdf"
-    />
-    <button type="button" onclick={tiler.chooseOutput}>Save as…</button>
-  </div>
-</section>

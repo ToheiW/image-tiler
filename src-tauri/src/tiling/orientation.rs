@@ -33,6 +33,17 @@ impl Orientation {
         }
     }
 
+    /// True when applying this orientation exchanges width and height.
+    pub fn swaps_dimensions(self) -> bool {
+        matches!(
+            self,
+            Orientation::Transpose
+                | Orientation::Rotate90
+                | Orientation::Transverse
+                | Orientation::Rotate270
+        )
+    }
+
     pub fn apply(self, image: DynamicImage) -> DynamicImage {
         match self {
             Orientation::Normal => image,

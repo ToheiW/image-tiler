@@ -2,10 +2,13 @@ use std::ffi::OsString;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::command;
 
-use crate::tiling::{tile_to_pdf as run_tiling, PdfRequest, PdfReport, TileError};
+use crate::tiling::{
+    LayoutPlan, LayoutSpec, PdfReport, PdfRequest, TileError, oriented_image_dimensions,
+    tile_to_pdf as run_tiling,
+};
 
 /// Tells the frontend what kind of failure occurred, so it can react
 /// (e.g. offer an overwrite confirmation) instead of string-matching.
@@ -17,9 +20,13 @@ pub enum ApiErrorKind {
     InvalidDpi,
     InvalidOverlap,
     InvalidMargin,
-    InvalidPageSize,
+    InvalidGrid,
     PageTooSmall,
-    InvalidInputName,
+    PageTooLarge,
+    EmptyImage,
+    ImageTooLarge,
+    TooManyPages,
+    OutputPathNotAbsolute,
     Io,
     Image,
     Pdf,
@@ -49,10 +56,14 @@ impl From<TileError> for ApiError {
             TileError::InvalidDpi => ApiErrorKind::InvalidDpi,
             TileError::InvalidOverlap => ApiErrorKind::InvalidOverlap,
             TileError::InvalidMargin => ApiErrorKind::InvalidMargin,
-            TileError::InvalidPageSize => ApiErrorKind::InvalidPageSize,
+            TileError::InvalidGrid => ApiErrorKind::InvalidGrid,
             TileError::PageTooSmall => ApiErrorKind::PageTooSmall,
-            TileError::InvalidInputName(_) => ApiErrorKind::InvalidInputName,
-            TileError::Io(_) => ApiErrorKind::Io,
+            TileError::PageTooLarge { .. } => ApiErrorKind::PageTooLarge,
+            TileError::EmptyImage => ApiErrorKind::EmptyImage,
+            TileError::ImageTooLarge { .. } => ApiErrorKind::ImageTooLarge,
+            TileError::TooManyPages { .. } => ApiErrorKind::TooManyPages,
+            TileError::OutputPathNotAbsolute(_) => ApiErrorKind::OutputPathNotAbsolute,
+            TileError::Io(_) | TileError::OutputWrite { .. } => ApiErrorKind::Io,
             TileError::Image(_) => ApiErrorKind::Image,
             TileError::Pdf(_) => ApiErrorKind::Pdf,
         };
@@ -77,20 +88,58 @@ impl PendingOpen {
     }
 }
 
-/// File to open on startup: an OS-delivered file first, then `argv[1]`.
+/// File to open on startup: an OS-delivered file first, then the first
+/// existing file among the command-line arguments.
 #[command]
 pub fn startup_input(pending: tauri::State<'_, PendingOpen>) -> Option<String> {
     pending
         .take()
-        .or_else(|| resolve_startup_input(std::env::args_os().nth(1)))
+        .or_else(|| std::env::args_os().skip(1).find_map(resolve_startup_input))
 }
 
-fn resolve_startup_input(arg: Option<OsString>) -> Option<String> {
-    let canonical = std::fs::canonicalize(PathBuf::from(arg?)).ok()?;
+fn resolve_startup_input(arg: OsString) -> Option<String> {
+    let canonical = std::fs::canonicalize(PathBuf::from(arg)).ok()?;
     if !canonical.is_file() {
         return None;
     }
     canonical.to_str().map(str::to_owned)
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PlanRequest {
+    pub input: PathBuf,
+    pub spec: LayoutSpec,
+}
+
+/// Layout-only command: reads the image header (no decode) and returns the
+/// exact plan the PDF writer will use, so the preview can match it.
+#[command]
+pub fn plan_layout(request: PlanRequest) -> Result<LayoutPlan, ApiError> {
+    let (width, height) = oriented_image_dimensions(&request.input).map_err(ApiError::from)?;
+    crate::tiling::layout::plan_layout(&request.spec, width, height).map_err(ApiError::from)
+}
+
+/// Extends the asset-protocol scope to the file the user just picked, so
+/// previews work outside the static scope without exposing whole directories.
+/// Returns the canonical path the frontend should load.
+#[command]
+pub fn allow_preview(app: tauri::AppHandle, path: String) -> Result<String, String> {
+    use tauri::Manager;
+
+    let canonical =
+        std::fs::canonicalize(&path).map_err(|err| format!("cannot resolve {path}: {err}"))?;
+    if !canonical.is_file() {
+        return Err(format!("not a file: {path}"));
+    }
+    app.asset_protocol_scope()
+        .allow_file(&canonical)
+        .map_err(|err| format!("cannot allow preview: {err}"))?;
+    Ok(canonical.to_string_lossy().into_owned())
+}
+
+#[command]
+pub fn share_supported() -> bool {
+    cfg!(target_os = "macos")
 }
 
 /// Shows the macOS share sheet for a generated PDF.
@@ -105,7 +154,8 @@ pub fn share_pdf(window: tauri::WebviewWindow, path: String) -> Result<(), Strin
     {
         let ns_window = window
             .ns_window()
-            .map_err(|err| format!("cannot access the window: {err}"))? as usize;
+            .map_err(|err| format!("cannot access the window: {err}"))?
+            as usize;
 
         window
             .run_on_main_thread(move || {

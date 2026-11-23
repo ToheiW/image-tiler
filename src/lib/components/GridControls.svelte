@@ -7,26 +7,78 @@
 <section class="field">
   <div class="field-header">
     <span class="label">Grid</span>
-    <div class="segmented" role="group" aria-label="Grid mode">
+    <div class="segmented" role="group" aria-label="Sizing mode">
       <button
         type="button"
-        class:active={tiler.sizeMode === "tile"}
-        onclick={() => (tiler.sizeMode = "tile")}>Tile size</button
+        class:active={tiler.mode === "pages"}
+        onclick={() => (tiler.mode = "pages")}>Paper pages</button
       >
       <button
         type="button"
-        class:active={tiler.sizeMode === "grid"}
-        onclick={() => (tiler.sizeMode = "grid")}>Rows × cols</button
-      >
-      <button
-        type="button"
-        class:active={tiler.sizeMode === "a4"}
-        onclick={() => (tiler.sizeMode = "a4")}>A4 pages</button
+        class:active={tiler.mode === "tile"}
+        onclick={() => (tiler.mode = "tile")}>Exact tile size</button
       >
     </div>
   </div>
 
-  {#if tiler.sizeMode === "tile"}
+  {#if tiler.mode === "pages"}
+    <div class="field-header">
+      <span class="label">Paper</span>
+      <div class="segmented" role="group" aria-label="Paper size">
+        <button
+          type="button"
+          class:active={tiler.pageSize === "a4"}
+          onclick={() => (tiler.pageSize = "a4")}>A4</button
+        >
+        <button
+          type="button"
+          class:active={tiler.pageSize === "a3"}
+          onclick={() => (tiler.pageSize = "a3")}>A3</button
+        >
+      </div>
+    </div>
+
+    <div class="field-header">
+      <span class="label">Orientation</span>
+      <div class="segmented" role="group" aria-label="Page orientation">
+        <button
+          type="button"
+          class:active={tiler.orientation === "portrait"}
+          onclick={() => (tiler.orientation = "portrait")}>Portrait</button
+        >
+        <button
+          type="button"
+          class:active={tiler.orientation === "landscape"}
+          onclick={() => (tiler.orientation = "landscape")}>Landscape</button
+        >
+      </div>
+    </div>
+
+    {#if tiler.layout === "one_tile_per_page"}
+      <div class="grid-2">
+        <label>
+          Columns
+          <input type="number" min="1" step="1" bind:value={tiler.columns} />
+        </label>
+        <label>
+          Rows
+          <input type="number" min="1" step="1" bind:value={tiler.rows} />
+        </label>
+      </div>
+    {:else}
+      <p class="hint">Single page: the whole image is fitted to one sheet.</p>
+    {/if}
+
+    {#if tiler.plan}
+      <p class="hint">
+        {tiler.plan.page_width_mm} × {tiler.plan.page_height_mm} mm · grid
+        {tiler.plan.columns} × {tiler.plan.rows} · {tiler.pageCount} page{tiler.pageCount ===
+        1
+          ? ""
+          : "s"} · ≈ {tiler.effectiveDpi} DPI
+      </p>
+    {/if}
+  {:else}
     <div class="grid-2">
       <label>
         Width ({tiler.unit})
@@ -38,9 +90,7 @@
       </label>
     </div>
     <div class="field-header">
-      <span class="hint">
-        = {tiler.tilePxW} × {tiler.tilePxH} px at {tiler.dpi} DPI
-      </span>
+      <span class="hint">= {tiler.tilePxW} × {tiler.tilePxH} px</span>
       <div class="segmented" role="group" aria-label="Tile size unit">
         <button
           type="button"
@@ -54,66 +104,18 @@
         >
       </div>
     </div>
-  {:else if tiler.sizeMode === "grid"}
-    <div class="grid-2">
-      <label>
-        Columns
-        <input type="number" min="1" step="1" bind:value={tiler.gridCols} />
-      </label>
-      <label>
-        Rows
-        <input type="number" min="1" step="1" bind:value={tiler.gridRows} />
-      </label>
-    </div>
-    <p class="hint">
-      Tile = {tiler.tilePxW} × {tiler.tilePxH} px at {tiler.dpi} DPI ·
-      {tiler.columns} × {tiler.rows} = {tiler.columns * tiler.rows} page{tiler.columns *
-        tiler.rows ===
-      1
-        ? ""
-        : "s"}
-    </p>
-  {:else}
-    <div class="field-header">
-      <span class="hint">
-        A4 {tiler.a4Landscape ? "landscape" : "portrait"} ({tiler.a4Page[0]} ×
-        {tiler.a4Page[1]} mm)
-      </span>
-      <div class="segmented" role="group" aria-label="A4 grid mode">
-        <button
-          type="button"
-          class:active={tiler.a4Spec === "grid"}
-          onclick={() => (tiler.a4Spec = "grid")}>Rows × cols</button
-        >
-        <button
-          type="button"
-          class:active={tiler.a4Spec === "count"}
-          onclick={() => (tiler.a4Spec = "count")}>Page count</button
-        >
-      </div>
-    </div>
-
-    {#if tiler.a4Spec === "grid"}
-      <div class="grid-2">
-        <label>
-          Columns
-          <input type="number" min="1" step="1" bind:value={tiler.a4Cols} />
-        </label>
-        <label>
-          Rows
-          <input type="number" min="1" step="1" bind:value={tiler.a4Rows} />
-        </label>
-      </div>
-    {:else}
-      <label>
-        Total A4 pages
-        <input type="number" min="1" step="1" bind:value={tiler.a4Total} />
-      </label>
+    <label>
+      DPI
+      <input type="number" min="1" step="1" bind:value={tiler.dpi} />
+    </label>
+    {#if tiler.plan}
+      <p class="hint">
+        Pages are {tiler.plan.page_width_mm} × {tiler.plan.page_height_mm} mm · grid
+        {tiler.plan.columns} × {tiler.plan.rows} · {tiler.pageCount} page{tiler.pageCount ===
+        1
+          ? ""
+          : "s"}
+      </p>
     {/if}
-
-    <p class="hint">
-      {tiler.a4Grid.cols} × {tiler.a4Grid.rows} A4 pages · image scaled to fit ≈
-      {tiler.a4EffectiveDpi} DPI
-    </p>
   {/if}
 </section>
