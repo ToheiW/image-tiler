@@ -1,0 +1,47 @@
+name: windows-build
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build Tauri app
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # `bundle.targets` is "all", which on Windows means NSIS and MSI.
+      - name: Upload NSIS installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: image-tiler-windows-nsis
+          path: src-tauri/target/release/bundle/nsis/*.exe
+          if-no-files-found: error
+
+      - name: Upload MSI installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: image-tiler-windows-msi
+          path: src-tauri/target/release/bundle/msi/*.msi
+          if-no-files-found: error
+
+      - name: Upload standalone executable
+        uses: actions/upload-artifact@v4
+        with:
+          name: image-tiler-windows-exe
+          path: src-tauri/target/release/image_tiler.exe
+          if-no-files-found: error
