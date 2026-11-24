@@ -18,6 +18,26 @@ Download from [Releases](https://github.com/ToheiW/image-tiler/releases/latest):
 
 These builds are not code-signed, so Windows SmartScreen may warn on first launch. Choose "More info" and then "Run anyway".
 
+## Install on macOS
+
+Download from [Releases](https://github.com/ToheiW/image-tiler/releases/latest). One universal build works on both Apple Silicon and Intel Macs.
+
+| File | Use |
+| --- | --- |
+| `ImageTiler_0.1.0_macos_universal.dmg` | Recommended. Open the disk image, drag `image_tiler` into Applications, then eject the disk image. |
+| `ImageTiler_0.1.0_macos_universal.zip` | Use this if the DMG does not open. Double-click to unzip, drag `image_tiler` into Applications, then delete the zip. |
+
+### First launch
+
+The app is not signed with an Apple Developer ID and is not notarised - notarisation requires a paid Apple Developer account - so macOS will warn the first time. It is ad-hoc signed, so macOS should not report it as damaged. To open it:
+
+1. Open `image_tiler` from Applications. macOS reports that it cannot verify the developer; close that dialog.
+2. Open System Settings > Privacy & Security.
+3. Scroll down and click "Open Anyway" next to `image_tiler`.
+4. Authenticate, then click "Open" in the confirmation dialog.
+
+Later launches work normally. On macOS 15, the older right-click > Open shortcut no longer bypasses this warning.
+
 ## Build and run on macOS
 
 Prerequisites:
@@ -39,7 +59,13 @@ Build a macOS app bundle:
 npm run tauri build
 ```
 
-The app is written to `src-tauri/target/release/bundle/macos/image_tiler.app`, with a disk image under `src-tauri/target/release/bundle/dmg/`. No macOS binary is published in Releases yet; build it from source.
+The app is written to `src-tauri/target/release/bundle/macos/image_tiler.app`, with a disk image under `src-tauri/target/release/bundle/dmg/`. This builds for the current Mac's architecture. To produce the same universal app that is published in Releases:
+
+```sh
+npm run tauri build -- --target universal-apple-darwin --bundles app
+```
+
+The universal bundle is written to `src-tauri/target/universal-apple-darwin/release/bundle/macos/image_tiler.app`.
 
 Checks:
 
