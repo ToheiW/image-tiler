@@ -1,0 +1,82 @@
+name: macos-build
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-latest
+    timeout-minutes: 90
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Add Rust targets
+        run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      # The universal target builds both architectures and merges them with lipo.
+      - name: Build universal app
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          args: --target universal-apple-darwin --bundles app
+
+      - name: Verify universal binary
+        run: |
+          set -euo pipefail
+          APP="src-tauri/target/universal-apple-darwin/release/bundle/macos/image_tiler.app"
+          test -d "$APP"
+          lipo -info "$APP/Contents/MacOS/image_tiler"
+
+      # Ad-hoc signing keeps macOS from calling the app damaged. It does not
+      # satisfy Gatekeeper, which still needs the user's Open Anyway approval.
+      - name: Sign app ad hoc
+        run: |
+          set -euo pipefail
+          APP="src-tauri/target/universal-apple-darwin/release/bundle/macos/image_tiler.app"
+          xattr -cr "$APP"
+          codesign --force --deep --sign - "$APP"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+
+      - name: Create zip
+        run: |
+          set -euo pipefail
+          APP="src-tauri/target/universal-apple-darwin/release/bundle/macos/image_tiler.app"
+          mkdir -p dist
+          ditto -c -k --sequesterRsrc --keepParent "$APP" "dist/ImageTiler_0.1.0_macos_universal.zip"
+
+      # hdiutil is headless-safe, unlike the Finder-scripted DMG step. If it
+      # still fails, continue and publish at least the zip.
+      - name: Create DMG
+        id: dmg
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          APP="src-tauri/target/universal-apple-darwin/release/bundle/macos/image_tiler.app"
+          mkdir -p dist/dmg
+          ditto "$APP" "dist/dmg/image_tiler.app"
+          ln -s /Applications "dist/dmg/Applications"
+          hdiutil create -volname "Image Tiler" -srcfolder dist/dmg -ov -format UDZO "dist/ImageTiler_0.1.0_macos_universal.dmg"
+
+      - name: Attach to release v0.1.0
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          files=("dist/ImageTiler_0.1.0_macos_universal.zip")
+          if [ -f "dist/ImageTiler_0.1.0_macos_universal.dmg" ]; then
+            files+=("dist/ImageTiler_0.1.0_macos_universal.dmg")
+          fi
+          gh release upload v0.1.0 "${files[@]}" --clobber
